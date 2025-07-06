@@ -115,6 +115,6 @@ def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
 
     return df
 
-latitude, longitude = get_geocode("San Jose", "CA", "US")
-df = get_hourly_forecast(latitude, longitude)
-print(f"entry:{df}")
+# latitude, longitude = get_geocode("San Jose", "CA", "US")
+# df = get_hourly_forecast(latitude, longitude)
+# print(f"entry:{df}")
