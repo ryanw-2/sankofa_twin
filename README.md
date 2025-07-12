@@ -54,12 +54,6 @@ By offering a free, transparent tool to simulate greenhouse operations, this pro
 
 ---
 
-## 🖼️ Screenshot
-
-> Replace `screenshot.png` with a screen grab of your running dashboard.
-
----
-
 ## 🚀 Getting Started
 
 ```bash
