@@ -1,56 +1,38 @@
-# 🌿 Greenhouse Resource Planner & Digital Twin Dashboard
+
+# Greenhouse Resource Optimization Digital Twin
 
 ![Dashboard Screenshot](dashboard-test.png)  
 *A real-time dashboard that simulates greenhouse conditions and recommends energy-efficient actions for farmers.*
 
 ---
 
-## 📌 Project Summary
+This project simulates and forecasts the internal climate of a greenhouse to help small local growers—particularly the Sankofa farmer community in Pittsburgh—optimize resource use and maintain ideal growing conditions.
 
-This project builds a simulation-based dashboard to help local greenhouse farmers—especially those connected with the **Sankofa Village Community Farm** in Pittsburgh—optimize energy usage and climate control decisions based on weather forecasts.
+It combines a simulation-based **digital twin**, real weather forecasts, and machine learning models to predict future temperature behavior and recommend heating and venting actions.
 
-By integrating weather data with a lightweight **digital twin model**, the dashboard forecasts internal greenhouse temperature and humidity, estimates energy usage and cost, and provides actionable insights tailored for resource-conscious growers.
+## Objectives
 
----
+* Develop a lightweight simulation model (digital twin) of greenhouse temperature and humidity behavior.
+* Integrate real-time weather forecast data using the OpenWeatherAPI.
+* Use **TensorFlow regression** to predict the greenhouse's internal temperature 12 hours ahead.
+* Use **TensorFlow classifiers** to predict when heating or venting should be turned on or off to keep conditions optimal.
+* Build a dashboard to visualize the predicted internal climate, recommended control actions, and estimated energy costs.
 
-## 🎯 Objectives
+## Tech Stack
 
-- 🧪 **Simulate greenhouse internal climate** based on real-time weather forecasts
-- 💡 **Estimate energy usage and cost** under time-of-use (TOU) electricity rates
-- 🛰️ **Provide data-driven recommendations** for when to heat or ventilate
-- 🌱 **Support small-scale greenhouse farmers** like those in the Sankofa community
-- 📊 **Visualize tradeoffs** between comfort, cost, and control actions
+* Python
+* TensorFlow (regression and classifier models)
+* Scikit-learn (feature scaling and evaluation)
+* Streamlit (interactive dashboard)
+* OpenWeatherAPI (weather forecast data)
+* Matplotlib and Seaborn (visualizations)
+* Pandas and NumPy (data processing and simulation)
 
----
+## Why this project matters
 
-## 🧰 Tech Stack
+Small urban and peri-urban greenhouses often lack affordable tools to plan ahead for changing weather conditions and to track resource costs. This digital twin demonstrates how **machine learning and simulation** can make local food production more resilient and sustainable—even without large-scale commercial greenhouse systems.
 
-| Layer         | Tool/Library                     |
-|---------------|----------------------------------|
-| 🌐 Dashboard   | [Streamlit](https://streamlit.io) for rapid web app development |
-| 🧠 Simulator   | Python-based digital twin model simulating temperature + humidity |
-| 🌦️ Weather API | [OpenWeatherMap](https://openweathermap.org/api) for hourly forecasts |
-| ⚡ Energy Calc | Custom estimator using Duquesne Light TOU residential rates |
-| 📈 Plotting     | Matplotlib for dual-axis temperature and energy charts |
-
----
-
-## 🌍 Community Impact
-
-This project is designed with the **Sankofa Village Community Farm** in mind—a local initiative focused on food justice, sustainability, and empowering Black growers in Pittsburgh.
-
-By offering a free, transparent tool to simulate greenhouse operations, this project supports more efficient planning, cost savings, and informed decisions rooted in real data.
-
----
-
-## 🧪 Features
-
-- ✅ Weather-integrated simulator with real-time forecast
-- ✅ Digital twin model for indoor temp + humidity
-- ✅ Time-of-use energy pricing from Duquesne Light
-- ✅ Custom rule-based heating/venting control
-- ✅ Summary metrics + violation alerts
-- ✅ Expandable for crop profiles and real-time control
+The project is designed to be understandable, adaptable, and deployable by student engineers and local growers who may not have access to complex systems.
 
 ---
 
