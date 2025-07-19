@@ -43,6 +43,7 @@ def simulate_internal_temp(
     for i, row in forecast_df.iterrows():
         ext_temp = row["temp"]
         ext_humidity = row["humidity"]
+        cloud_cover = row["cloud_cover"]
 
         heating = heating_fn(row["datetime"])
         venting = venting_fn(row["datetime"])
@@ -66,6 +67,7 @@ def simulate_internal_temp(
                 "internal_temp": current_temp,
                 "external_humidity": ext_humidity,
                 "internal_humidity": current_humidity,
+                "cloud_cover": cloud_cover,
                 "heating": heating,
                 "venting": venting,
             }

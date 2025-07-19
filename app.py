@@ -3,18 +3,10 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import matplotlib.pyplot as plt
 from forecast import get_hourly_forecast, get_geocode
-from twin import simulate_internal_temp, forecast_n_hours_ahead
+from twin import simulate_internal_temp
 from advice import always_heat_at_night, vent_if_hot
 from energy import estimate_energy
-import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
-import joblib
 
-reg_model = tf.keras.models.load_model("./notebooks/models/regression_model.keras")
-clf_heat_model = tf.keras.models.load_model("./notebooks/models/classifier_heat_model.keras")
-clf_vent_model = tf.keras.models.load_model("./notebooks/models/classifier_vent_model.keras")
-scaler = joblib.load("./notebooks/models/scaler.pkl")
-features = ["external_temp", "external_humidity", "internal_temp", "internal_humidity", "heating", "venting"]
 st.set_page_config(page_title="Greenhouse Twin Dashboard", layout="wide")
 st.title("Greenhouse Resource Planner")
 st.subheader("Simulated Greenhouse Temperature using Digital Twin")
@@ -23,6 +15,7 @@ st.subheader("Simulated Greenhouse Temperature using Digital Twin")
 city = st.text_input("Enter city", "Pittsburgh")
 state = st.text_input("Enter state (2-letter code)", "PA")
 country = st.text_input("Enter country (2-letter code)", "US")
+count = st.number_input("Enter number of hours to forecast", 24)
 
 # --- Get forecast and simulate ---
 if st.button("Simulate Greenhouse"):
@@ -34,37 +27,8 @@ if st.button("Simulate Greenhouse"):
         st.success(f"Location: {city}, Lat: {latitude:.2f}, Lon: {longitude:.2f}")
 
         # Get forecast
-        count = 24
+        count = 72
         forecast_df = get_hourly_forecast(latitude, longitude, count)
-
-        external_temp_forecast = forecast_df["temp"].values[:count]
-        external_humidity_forecast = forecast_df["humidity"].values[:count]
-
-        predicted_forecast_df = forecast_n_hours_ahead(
-            count,
-            start_internal_temp=68,
-            start_internal_humidity=70,
-            external_temp_forecast=external_temp_forecast,
-            external_humidity_forecast=external_humidity_forecast,
-            clf_heat_model=clf_heat_model,
-            clf_vent_model=clf_vent_model,
-            scaler=scaler,
-            features=features
-        )
-
-        # Run Regression and Classifier simulation
-        fig, ax = plt.subplots(figsize=(8,4))
-        ax.plot(forecast_df["datetime"], forecast_df["predicted_internal_temp"], label="Predicted Internal Temp")
-        ax.set_title("Forecast: Internal Temp Next 12 Hours")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Temperature (°F)")
-        ax.legend()
-        fig.autofmt_xdate()
-        st.pyplot(fig)
-
-        st.subheader("Predicted Heating & Venting Actions")
-        st.dataframe(forecast_df[["datetime", "predicted_heating", "predicted_venting"]])
-
 
         # Run digital twin simulation
         sim_df = simulate_internal_temp(
