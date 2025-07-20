@@ -2,6 +2,10 @@ import os
 import requests
 import pandas as pd
 from dotenv import load_dotenv
+import pvlib
+from datetime import datetime, timedelta
+from typing import cast
+import numpy as np
 
 load_dotenv()
 WEATHER_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -75,6 +79,27 @@ def get_current_weather(my_lat:float, my_lon:float):
 
     return df
 
+def get_hourly_solar(my_lat, my_lon, count=24):
+    cur_time = datetime.now()
+    times = pd.date_range(start=cur_time + timedelta(hours=1), end=cur_time + timedelta(hours=count), freq="h")
+    solar_df = pvlib.solarposition.get_solarposition(times, my_lat, my_lon)
+    
+    if solar_df is None:
+        raise Exception("Failed to calculate solar data.")
+    
+    solar_df = cast(pd.DataFrame,
+                    pvlib.solarposition.get_solarposition(times, my_lat, my_lon))
+    
+    solar_df = (
+        solar_df
+        .reset_index(names="datetime")     # 1-liner rename
+    )
+    solar_df["entry"] = np.arange(len(solar_df))
+    solar_df = solar_df.set_index("entry")
+
+    return solar_df
+
+
 def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
     if not WEATHER_API_KEY:
         raise ValueError("API key not found. Check .env file")
@@ -84,7 +109,7 @@ def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
         "lon":my_lon,
         "appid":WEATHER_API_KEY,
         "cnt": count,
-        "units": "imperial"
+        "units": "metric"
     }
 
     response = requests.get(FORECAST_BASE_URL, params=params)
@@ -117,6 +142,8 @@ def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
 
     return df
 
-# latitude, longitude = get_geocode("San Jose", "CA", "US")
-# df = get_hourly_forecast(latitude, longitude)
-# print(f"entry:{df}")
+latitude, longitude = get_geocode("San Jose", "CA", "US")
+df_forecast = get_hourly_forecast(latitude, longitude)
+df_solar = get_hourly_solar(latitude, longitude)
+print(f"entry:{df_solar}")
+print(f"entry:{df_forecast}")
