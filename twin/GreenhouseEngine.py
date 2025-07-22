@@ -21,10 +21,11 @@ LIGHT_TRANSMISSION     = 0.80
 ALBEDO                 = 0.20
 R_IP_TO_SI             = 5.678263        # divide IP R by this to get m² K W-1
 
+AIR_DENSITY            = 1.225
+
 # ────────────── GREENHOUSE CONFIG ──────────────────────────────────────
 class GreenhouseConfig:
-    def __init__(self, latitude: float, longitude: float,
-                 num_footings: int = 8, design_temp_diff_C: float = 20):
+    def __init__(self, latitude: float, longitude: float, num_footings: int = 8, design_temp_diff_C: float = 20):
         # ── Geometry (m) ────────────────────────────────────────────────
         self.latitude  = latitude
         self.longitude = longitude
@@ -45,9 +46,9 @@ class GreenhouseConfig:
 
         # ── Volume (m³) ────────────────────────────────────────────────
         # Triangular gable + sidewalls
-        roof_peak_height = self.height - self.sidewall
+        _roof_peak_height = self.height - self.sidewall
         self.volume_m3 = (self.length * self.width *
-                          (roof_peak_height / 2 + self.sidewall))
+                          (_roof_peak_height / 2 + self.sidewall))
 
         # ── Fabric performance (m² K W-1) ──────────────────────────────
         self.wall_R   = 1.8 / R_IP_TO_SI     # 0.317  m² K W-1
@@ -60,15 +61,14 @@ class GreenhouseConfig:
         self.design_vent_ach = 2.0           # natural vents full-open
 
         # ── Thermal mass (kg) ──────────────────────────────────────────
-        self.mass_kg = self._calc_thermal_mass(num_footings)
+        self.mass_kg = self._init_thermal_mass_KG(num_footings)
         self.mass_c_p = SPECIFIC_HEAT_J_PER_KG
 
         # ── Heating design load (W) ────────────────────────────────────
         self.design_dT = design_temp_diff_C
-        self.heater_W  = self._heater_sizing_W()
+        self.heater_W  = self._init_heater_sizing_W()
 
-    # ---------- helpers -------------------------------------------------
-    def _calc_thermal_mass(self, num_footings: int) -> float:
+    def _init_thermal_mass_KG(self, num_footings: int) -> float:
         # 12 ft³ footing → 0.339 m³ each
         concrete_V = num_footings * (12 * 0.0283168)
         concrete_m = concrete_V * CONCRETE_DENSITY_KG_M3
@@ -76,26 +76,30 @@ class GreenhouseConfig:
         soil_m     = soil_V * SOIL_DENSITY_KG_M3 * SOIL_COUPLING_FACTOR
         return concrete_m + soil_m + BAMBOO_MASS_KG
 
-    def _heater_sizing_W(self) -> int:
+    def _init_heater_sizing_W(self) -> int:
         UA_envelope = (
             self.wall_A / self.wall_R +
             self.roof_A / self.roof_R +
             self.floor_A / self.floor_R
         )
         Q_cond = UA_envelope * self.design_dT          # W
-        m_dot  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2  # kg s-1
-        Q_vent = m_dot * 1005 * self.design_dT         # W
+        mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2  # kg s-1
+        Q_vent = mass_flow * 1005 * self.design_dT         # W
         safety = 1.30
         return int((Q_cond + Q_vent) * safety)
 
 
 class GreenhouseThermalEngine:
-    def __init__(self, config, T_air_init_C: float):
+    def __init__(self, config: GreenhouseConfig, air_temp_init_C: float):
         self.cfg      = config
-        self.air_temp    = T_air_init_C              # °C
+        self.air_temp    = air_temp_init_C            
         self.mass     = ThermalMass(config.mass_kg, config.mass_c_p)
 
-    def calculate_solar_gain(self, ghi, dni, dhi, solar_zenith, solar_azimuth):
+    def calculate_solar_gain_W(self, ghi, dni, dhi, solar_zenith, solar_azimuth):
+        """
+        Calculates the amount of energy entering the building
+        at a given solar position.
+        """
         if ghi <= 0:
             return 0.0
 
@@ -111,10 +115,12 @@ class GreenhouseThermalEngine:
         area_m2 = self.cfg.glazing_A * self.cfg.glazing_tau
         return poa * area_m2
 
-    def calculate_heat_loss(self, ext_temp: float, wind_m_s: float) -> float:
-        dT = self.air_temp - ext_temp
-        if dT <= 0:
-            return 0.0
+    def calculate_heat_loss_W(self, air_temp: float, ext_temp: float, wind_m_s: float) -> float:
+        """
+        Calculates the amount of energy lost due to conduction
+        and infiltration.
+        """
+        dT = air_temp - ext_temp
 
         # 1. Conduction (W)
         Q_cond = (
@@ -131,13 +137,32 @@ class GreenhouseThermalEngine:
         # 3. Wind multiplier
         WIND_COEFF = 0.05      
         Q_total = (Q_cond + Q_inf) * (1 + WIND_COEFF * wind_m_s)
+
         return Q_total
-
-
+    
+    def calculate_venting_loss_W(self, air_temp: float, ext_temp: float, vent_ach: float) -> float:
+        """
+        Calculates the energy loss due to active ventilation.
+        """
+        dT = air_temp - ext_temp
+        if vent_ach == 0 or dT < 0:
+            return 0.0
         
+        CP_AIR = 1005
+        volumetric_flow = self.cfg.volume_m3 * (vent_ach / 3600)
+        mass_flow = AIR_DENSITY * volumetric_flow
+        Q_vent = mass_flow * CP_AIR * (air_temp - ext_temp)
 
+        return Q_vent
 
+    def calculate_heating_gain_W(self, heater_on: bool, partial: float = 1.0) -> float:
+        """
+        Calculates the energy gained due to active heating.
+        """
+        if not heater_on:
+            return 0.0
 
-        
-
-
+        EFFICIENCY =  0.90
+        partial = max(0.0, min(1.0, partial))
+        Q_heat = partial * self.cfg.heater_W * EFFICIENCY
+        return Q_heat
