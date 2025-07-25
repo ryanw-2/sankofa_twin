@@ -6,6 +6,7 @@ import pvlib
 from datetime import datetime, timedelta
 from typing import cast
 import numpy as np
+import math
 
 load_dotenv()
 WEATHER_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
@@ -37,7 +38,7 @@ def get_geocode(city:str, state:str, country:str):
     data = response.json()
     return (data[0]["lat"], data[0]["lon"])
 
-def get_current_weather(my_lat:float, my_lon:float):
+def get_current_weather(my_lat:float, my_lon:float, timezone:str):
     if not WEATHER_API_KEY:
         raise ValueError("API key not found. Check .env file")
 
@@ -45,7 +46,7 @@ def get_current_weather(my_lat:float, my_lon:float):
         "lat": my_lat,
         "lon":my_lon,
         "appid":WEATHER_API_KEY,
-        "units":"imperial"
+        "units":"metric"
     }
 
     response = requests.get(WEATHER_BASE_URL, params=params)
@@ -53,6 +54,7 @@ def get_current_weather(my_lat:float, my_lon:float):
         raise Exception(f"Failed to fetch data: {response.json()}")
     
     data = response.json()
+
 
     current_weather = []
     rain_val = -1
@@ -75,32 +77,26 @@ def get_current_weather(my_lat:float, my_lon:float):
     df = pd.DataFrame(current_weather)
     df["datetime"] = pd.to_datetime(df["datetime"], unit="s")
     df["datetime"] = df["datetime"].dt.tz_localize("UTC")
-    df["datetime"] = df["datetime"].dt.tz_convert("US/Pacific")
+    df["datetime"] = df["datetime"].dt.tz_convert(timezone)
 
     return df
 
-def get_hourly_solar(my_lat, my_lon, count=24):
-    cur_time = datetime.now()
-    times = pd.date_range(start=cur_time + timedelta(hours=1), end=cur_time + timedelta(hours=count), freq="h")
-    solar_df = pvlib.solarposition.get_solarposition(times, my_lat, my_lon)
-    
-    if solar_df is None:
-        raise Exception("Failed to calculate solar data.")
-    
-    solar_df = cast(pd.DataFrame,
-                    pvlib.solarposition.get_solarposition(times, my_lat, my_lon))
-    
-    solar_df = (
-        solar_df
-        .reset_index(names="datetime")     # 1-liner rename
-    )
-    solar_df["entry"] = np.arange(len(solar_df))
-    solar_df = solar_df.set_index("entry")
+def get_hourly_solar(my_lat, my_lon, timezone:str, count:int = 24):
+    now   = pd.Timestamp.now(timezone) 
+    start = (now + pd.Timedelta(hours=1)).floor("h")   
+    times_local = pd.date_range(start=start,
+                                periods=count,        
+                                freq="h",
+                                tz=timezone)
 
-    return solar_df
+    sol = pvlib.solarposition.get_solarposition(times_local.tz_convert("UTC"), my_lat, my_lon)
+    solar_df = cast(pd.DataFrame, sol)
+    solar_df = solar_df.tz_convert(timezone)
 
+    solar_df.index.name = "datetime"
+    return solar_df[["apparent_zenith", "azimuth"]]
 
-def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
+def get_hourly_weather(my_lat:float, my_lon:float, timezone:str, count=24):
     if not WEATHER_API_KEY:
         raise ValueError("API key not found. Check .env file")
 
@@ -138,12 +134,21 @@ def get_hourly_forecast(my_lat:float, my_lon:float, count=24):
     df = pd.DataFrame(forecast_weather)
     df["datetime"] = pd.to_datetime(df["datetime"], unit="s")
     df["datetime"] = df["datetime"].dt.tz_localize("UTC")
-    df["datetime"] = df["datetime"].dt.tz_convert("US/Pacific")
+    df["datetime"] = df["datetime"].dt.tz_convert(timezone)
 
     return df
 
-latitude, longitude = get_geocode("San Jose", "CA", "US")
-df_forecast = get_hourly_forecast(latitude, longitude)
-df_solar = get_hourly_solar(latitude, longitude)
-print(f"entry:{df_solar}")
-print(f"entry:{df_forecast}")
+def get_hourly_forecast(my_lat, my_lon, timezone, count=24):
+    weather_df = get_hourly_weather(my_lat, my_lon, timezone, count).set_index("datetime")
+    solar_df = get_hourly_solar(my_lat, my_lon, timezone, count)
+    
+    combined_df = weather_df.join(solar_df, how="left")
+    return combined_df
+
+
+latitude, longitude = get_geocode("Pittsburgh", "PA", "US")
+get_hourly_forecast(latitude, longitude, "US/Pacific")
+# df_forecast = get_hourly_forecast(latitude, longitude)
+# df_solar = get_hourly_solar(latitude, longitude)
+# print(f"entry:{df_solar}")
+# print(f"entry:{df_forecast}")

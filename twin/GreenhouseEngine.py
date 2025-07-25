@@ -20,7 +20,6 @@ SOLAR_HEAT_GAIN_COEFF  = 0.65            # SHGC of glazing
 LIGHT_TRANSMISSION     = 0.80
 ALBEDO                 = 0.20
 R_IP_TO_SI             = 5.678263        # divide IP R by this to get m² K W-1
-
 AIR_DENSITY            = 1.225
 
 # ────────────── GREENHOUSE CONFIG ──────────────────────────────────────
@@ -42,7 +41,7 @@ class GreenhouseConfig:
         self.wall_A = 2 * (self.length + self.width) * self.sidewall
         self.roof_A = self.length * self.width * ARCH_FACTOR
         self.floor_A = self.length * self.width
-        self.glazing_A = self.wall_A + self.roof_A           # fully glazed
+        self.glazing_A = self.wall_A + self.roof_A           
 
         # ── Volume (m³) ────────────────────────────────────────────────
         # Triangular gable + sidewalls
@@ -91,9 +90,9 @@ class GreenhouseConfig:
 
 class GreenhouseThermalEngine:
     def __init__(self, config: GreenhouseConfig, air_temp_init_C: float):
-        self.cfg      = config
-        self.air_temp    = air_temp_init_C            
-        self.mass     = ThermalMass(config.mass_kg, config.mass_c_p)
+        self.cfg = config
+        self.air_temp = air_temp_init_C            
+        self.mass = ThermalMass(config.mass_kg, config.mass_c_p)
 
     def calculate_solar_gain_W(self, ghi, dni, dhi, solar_zenith, solar_azimuth):
         """
@@ -166,3 +165,6 @@ class GreenhouseThermalEngine:
         partial = max(0.0, min(1.0, partial))
         Q_heat = partial * self.cfg.heater_W * EFFICIENCY
         return Q_heat
+
+    def simulate_step(forecast_df, steps:int=12):
+        return None
