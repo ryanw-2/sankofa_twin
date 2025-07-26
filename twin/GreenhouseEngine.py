@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from ThermalMass import ThermalMass
 import pvlib
+from typing import cast
 """
 The GreenhouseConfig class sets up the constants 
 of the greenhouse based on user defined values.
@@ -81,9 +82,9 @@ class GreenhouseConfig:
             self.roof_A / self.roof_R +
             self.floor_A / self.floor_R
         )
-        Q_cond = UA_envelope * self.design_dT          # W
-        mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2  # kg s-1
-        Q_vent = mass_flow * 1005 * self.design_dT         # W
+        Q_cond = UA_envelope * self.design_dT  
+        mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2
+        Q_vent = mass_flow * 1005 * self.design_dT 
         safety = 1.30
         return int((Q_cond + Q_vent) * safety)
 
@@ -94,7 +95,7 @@ class GreenhouseThermalEngine:
         self.air_temp = air_temp_init_C            
         self.mass = ThermalMass(config.mass_kg, config.mass_c_p)
 
-    def calculate_solar_gain_W(self, ghi, dni, dhi, solar_zenith, solar_azimuth):
+    def calculate_solar_gain_W(self, ghi:float, dni:float, dhi:float, solar_zenith:float, solar_azimuth:float):
         """
         Calculates the amount of energy entering the building
         at a given solar position.
@@ -109,10 +110,10 @@ class GreenhouseThermalEngine:
             solar_zenith, solar_azimuth,
             albedo=ALBEDO
         )
-        
-        poa = poa_comp['poa_global']
+
+        poa = poa_comp["poa_global"].iloc[0]
         area_m2 = self.cfg.glazing_A * self.cfg.glazing_tau
-        return poa * area_m2
+        return float(poa) * area_m2
 
     def calculate_heat_loss_W(self, air_temp: float, ext_temp: float, wind_m_s: float) -> float:
         """
@@ -139,7 +140,7 @@ class GreenhouseThermalEngine:
 
         return Q_total
     
-    def calculate_venting_loss_W(self, air_temp: float, ext_temp: float, vent_ach: float) -> float:
+    def calculate_venting_loss_W(self, air_temp: float, ext_temp: float, vent_ach:float) -> float:
         """
         Calculates the energy loss due to active ventilation.
         """
@@ -166,5 +167,28 @@ class GreenhouseThermalEngine:
         Q_heat = partial * self.cfg.heater_W * EFFICIENCY
         return Q_heat
 
-    def simulate_step(forecast_df, steps:int=12):
+    def simulate_step(self, air_temp, forecast_df, steps:int=12):
+        # solar gain + heating gain - (venting loss + heat loss)
+        simulated_conditions = []
+
+        cur_temp = air_temp
+        for entry in forecast_df:
+            wind_speed = entry["wind_speed"]
+            ext_temp = entry["temp"]
+            ghi = entry["ghi"]
+            dni = entry["dni"]
+            dhi = entry["dhi"]
+            zenith = entry["apparent_zenith"]
+            azimuth = entry["azimuth"]
+
+            solar_gain = self.calculate_solar_gain_W(ghi, dni, dhi, zenith, azimuth)
+            heat_loss = self.calculate_heat_loss_W(cur_temp, ext_temp, wind_speed)
+            venting_loss = self.calculate_venting_loss_W(cur_temp, ext_temp)
+            heating_gain = self.calculate_heating_gain_W(heater_on=False)
+
+            net_input_W = solar_gain + heating_gain - heat_loss - venting_loss
+            self.mass.update_temperature(net_input_W, cur_temp)
+
         return None
+
+

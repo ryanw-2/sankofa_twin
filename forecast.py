@@ -93,8 +93,22 @@ def get_hourly_solar(my_lat, my_lon, timezone:str, count:int = 24):
     solar_df = cast(pd.DataFrame, sol)
     solar_df = solar_df.tz_convert(timezone)
 
+    site = pvlib.location.Location(my_lat, my_lon,
+                                   tz=timezone,
+                                   altitude=250) ## hardcoded for pittsburgh
+    
+    clearsky = site.get_clearsky(times_local.tz_convert("UTC"))
+    sky_df = cast(pd.DataFrame, clearsky)
+    sky_df = sky_df.tz_convert(timezone)
+
+    solar_df = pd.concat(
+        [solar_df[["apparent_zenith", "azimuth"]],
+        sky_df[["ghi", "dni", "dhi"]]],
+        axis = 1
+    )
+
     solar_df.index.name = "datetime"
-    return solar_df[["apparent_zenith", "azimuth"]]
+    return solar_df
 
 def get_hourly_weather(my_lat:float, my_lon:float, timezone:str, count=24):
     if not WEATHER_API_KEY:
@@ -147,7 +161,8 @@ def get_hourly_forecast(my_lat, my_lon, timezone, count=24):
 
 
 latitude, longitude = get_geocode("Pittsburgh", "PA", "US")
-get_hourly_forecast(latitude, longitude, "US/Pacific")
+combined_df = get_hourly_forecast(latitude, longitude, "US/Pacific")
+print(combined_df)
 # df_forecast = get_hourly_forecast(latitude, longitude)
 # df_solar = get_hourly_solar(latitude, longitude)
 # print(f"entry:{df_solar}")
