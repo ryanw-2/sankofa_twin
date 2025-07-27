@@ -8,6 +8,8 @@ from typing import cast
 import numpy as np
 import math
 
+from GreenhouseEngine import GreenhouseConfig
+
 load_dotenv()
 WEATHER_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 
@@ -81,7 +83,7 @@ def get_current_weather(my_lat:float, my_lon:float, timezone:str):
 
     return df
 
-def get_hourly_solar(my_lat, my_lon, timezone:str, count:int = 24):
+def get_hourly_solar(my_lat, my_lon, weather_df, cfg: GreenhouseConfig, timezone:str, count:int = 24):
     now   = pd.Timestamp.now(timezone) 
     start = (now + pd.Timedelta(hours=1)).floor("h")   
     times_local = pd.date_range(start=start,
@@ -90,8 +92,8 @@ def get_hourly_solar(my_lat, my_lon, timezone:str, count:int = 24):
                                 tz=timezone)
 
     sol = pvlib.solarposition.get_solarposition(times_local.tz_convert("UTC"), my_lat, my_lon)
-    solar_df = cast(pd.DataFrame, sol)
-    solar_df = solar_df.tz_convert(timezone)
+    sol = cast(pd.DataFrame, sol)
+    sol = sol.tz_convert(timezone)
 
     site = pvlib.location.Location(my_lat, my_lon,
                                    tz=timezone,
@@ -100,12 +102,50 @@ def get_hourly_solar(my_lat, my_lon, timezone:str, count:int = 24):
     clearsky = site.get_clearsky(times_local.tz_convert("UTC"))
     sky_df = cast(pd.DataFrame, clearsky)
     sky_df = sky_df.tz_convert(timezone)
-
-    solar_df = pd.concat(
-        [solar_df[["apparent_zenith", "azimuth"]],
-        sky_df[["ghi", "dni", "dhi"]]],
-        axis = 1
+    
+    cloud_frac = (
+        weather_df.reindex(times_local)["cloud_cover"]
+        .to_numpy(dtype=float) / 100.0
     )
+
+    # Simple empirical factor (WMO, Duffie-Beckman): (1-0.75·CF^3)
+    trans = 1.0 - 0.75 * cloud_frac**3
+    trans = np.clip(trans, 0.0, 1.0)
+
+    ghi_adj = clearsky["ghi"].to_numpy() * trans
+
+    zen = sol["apparent_zenith"].to_numpy()
+    ghi_series = pd.Series(ghi_adj, index=times_local)
+
+    erbs = pvlib.irradiance.erbs(ghi_series, zen, times_local)
+    dni_adj = erbs["dni"].to_numpy()
+    dhi_adj = erbs["dhi"].to_numpy()
+
+    solar_df = pd.DataFrame(
+        {
+            "apparent_zenith": zen,
+            "azimuth": (sol["azimuth"].to_numpy() % 360),
+            "ghi": ghi_adj,
+            "dni": dni_adj,
+            "dhi": dhi_adj,
+        },
+        index=times_local,
+    )
+
+    ALBEDO = 0.20
+    poa_comp = pvlib.irradiance.get_total_irradiance(
+        surface_tilt   = cfg.surface_tilt_deg,
+        surface_azimuth= cfg.orientation,
+        dni            = solar_df["dni"],
+        ghi            = solar_df["ghi"],
+        dhi            = solar_df["dhi"],
+        solar_zenith   = solar_df["apparent_zenith"],
+        solar_azimuth  = solar_df["azimuth"],
+        albedo         = ALBEDO,
+    )["poa_global"]
+
+    area_m2 = cfg.glazing_A * cfg.glazing_tau
+    solar_df["Q_solar"] = poa_comp * area_m2
 
     solar_df.index.name = "datetime"
     return solar_df
@@ -130,7 +170,7 @@ def get_hourly_weather(my_lat:float, my_lon:float, timezone:str, count=24):
 
     forecast_weather = []   
     for entry in data["list"]:
-        rain_val = -1
+        rain_val = 0
         if has_value(entry, "rain"):
             rain_val = entry["rain"]["1h"]
 
@@ -152,16 +192,18 @@ def get_hourly_weather(my_lat:float, my_lon:float, timezone:str, count=24):
 
     return df
 
-def get_hourly_forecast(my_lat, my_lon, timezone, count=24):
+def get_hourly_forecast(my_lat, my_lon, cfg, timezone, count=24):
     weather_df = get_hourly_weather(my_lat, my_lon, timezone, count).set_index("datetime")
-    solar_df = get_hourly_solar(my_lat, my_lon, timezone, count)
+    solar_df = get_hourly_solar(my_lat, my_lon, weather_df, cfg, timezone, count)
     
     combined_df = weather_df.join(solar_df, how="left")
     return combined_df
 
 
 latitude, longitude = get_geocode("Pittsburgh", "PA", "US")
-combined_df = get_hourly_forecast(latitude, longitude, "US/Pacific")
+
+config = GreenhouseConfig(latitude, longitude)
+combined_df = get_hourly_forecast(latitude, longitude, config, "US/Pacific")
 print(combined_df)
 # df_forecast = get_hourly_forecast(latitude, longitude)
 # df_solar = get_hourly_solar(latitude, longitude)

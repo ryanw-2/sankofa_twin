@@ -1,9 +1,11 @@
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
-from ThermalMass import ThermalMass
 import pvlib
 from typing import cast
+
+from Predictive import Predictive
+from ThermalMass import ThermalMass
 """
 The GreenhouseConfig class sets up the constants 
 of the greenhouse based on user defined values.
@@ -49,6 +51,7 @@ class GreenhouseConfig:
         _roof_peak_height = self.height - self.sidewall
         self.volume_m3 = (self.length * self.width *
                           (_roof_peak_height / 2 + self.sidewall))
+        self.rho_cp_V = AIR_DENSITY * self.volume_m3 * 1005
 
         # ── Fabric performance (m² K W-1) ──────────────────────────────
         self.wall_R   = 1.8 / R_IP_TO_SI     # 0.317  m² K W-1
@@ -61,14 +64,21 @@ class GreenhouseConfig:
         self.design_vent_ach = 2.0           # natural vents full-open
 
         # ── Thermal mass (kg) ──────────────────────────────────────────
-        self.mass_kg = self._init_thermal_mass_KG(num_footings)
+        self.mass_kg = self._build_thermal_mass_KG(num_footings)
         self.mass_c_p = SPECIFIC_HEAT_J_PER_KG
-
+        self.ua_envelope = (
+            self.wall_A / self.wall_R +
+            self.roof_A / self.roof_R +
+            self.floor_A / self.floor_R
+        )
         # ── Heating design load (W) ────────────────────────────────────
         self.design_dT = design_temp_diff_C
-        self.heater_W  = self._init_heater_sizing_W()
+        self.heater_W  = self._build_heater_sizing_W()
 
-    def _init_thermal_mass_KG(self, num_footings: int) -> float:
+        # Controller
+        self.controller = self._build_controller()
+
+    def _build_thermal_mass_KG(self, num_footings: int) -> float:
         # 12 ft³ footing → 0.339 m³ each
         concrete_V = num_footings * (12 * 0.0283168)
         concrete_m = concrete_V * CONCRETE_DENSITY_KG_M3
@@ -76,18 +86,29 @@ class GreenhouseConfig:
         soil_m     = soil_V * SOIL_DENSITY_KG_M3 * SOIL_COUPLING_FACTOR
         return concrete_m + soil_m + BAMBOO_MASS_KG
 
-    def _init_heater_sizing_W(self) -> int:
-        UA_envelope = (
-            self.wall_A / self.wall_R +
-            self.roof_A / self.roof_R +
-            self.floor_A / self.floor_R
-        )
-        Q_cond = UA_envelope * self.design_dT  
+    def _build_heater_sizing_W(self) -> int:
+        Q_cond = self.ua_envelope * self.design_dT  
         mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2
         Q_vent = mass_flow * 1005 * self.design_dT 
         safety = 1.30
         return int((Q_cond + Q_vent) * safety)
 
+    def _build_controller(self) -> Predictive:
+        leak_U = AIR_DENSITY * self.volume_m3 * self.leak_ach / 3600 * 1005 
+        h_ma = 230
+        
+        sim_C_J_K = self.mass_kg * self.mass_c_p + AIR_DENSITY * self.volume_m3 * 1005
+        sim_U_W_K = self.ua_envelope + leak_U + h_ma
+
+        controller = Predictive(
+            C_J_K=sim_C_J_K,
+            U_W_K=sim_U_W_K,
+            heater_W=self.heater_W,
+            vent_max_ach=self.design_vent_ach,
+            dt_hr=1.0
+        )
+
+        return controller
 
 class GreenhouseThermalEngine:
     def __init__(self, config: GreenhouseConfig, air_temp_init_C: float):
@@ -167,28 +188,58 @@ class GreenhouseThermalEngine:
         Q_heat = partial * self.cfg.heater_W * EFFICIENCY
         return Q_heat
 
-    def simulate_step(self, air_temp, forecast_df, steps:int=12):
+    def simulate_step(self, initial_air_temp, initial_mass_temp, forecast_df, start_i:int=0, steps:int=12, horizon:int=12):
+        assert len(forecast_df) >= start_i + steps + horizon
         # solar gain + heating gain - (venting loss + heat loss)
-        simulated_conditions = []
+        simulated = []
+        
+        air_temp = initial_air_temp
+        mass_temp = initial_mass_temp
+        for k in range(start_i, start_i + steps):            
+            horizon_df = forecast_df[k:k+horizon] # needs extra 12 hours of data
+            pred_forecast_df = {
+                "temp" : horizon_df["temp"],
+                "Q_solar" : horizon_df["Q_solar"],
+            }
 
-        cur_temp = air_temp
-        for entry in forecast_df:
-            wind_speed = entry["wind_speed"]
-            ext_temp = entry["temp"]
-            ghi = entry["ghi"]
-            dni = entry["dni"]
-            dhi = entry["dhi"]
-            zenith = entry["apparent_zenith"]
-            azimuth = entry["azimuth"]
+            heater_on, part_load, vent_ach = self.cfg.controller.decide(air_temp, horizon_df)
 
-            solar_gain = self.calculate_solar_gain_W(ghi, dni, dhi, zenith, azimuth)
-            heat_loss = self.calculate_heat_loss_W(cur_temp, ext_temp, wind_speed)
-            venting_loss = self.calculate_venting_loss_W(cur_temp, ext_temp)
-            heating_gain = self.calculate_heating_gain_W(heater_on=False)
+            forecast_row = forecast_df.iloc[k]
+            ext_temp = forecast_row["temp"]
+            wind_speed = forecast_row["wind_speed"]
+            q_sol_gain = forecast_row["Q_solar"]
+            q_heat_loss = self.calculate_heat_loss_W(air_temp, ext_temp, wind_speed)
+            q_vent_loss = self.calculate_venting_loss_W(air_temp, ext_temp, vent_ach)
+            q_heat_gain = self.calculate_heating_gain_W(heater_on, part_load)
 
-            net_input_W = solar_gain + heating_gain - heat_loss - venting_loss
-            self.mass.update_temperature(net_input_W, cur_temp)
+            mass_factor = 0.3
+            q_to_mass = mass_factor * q_sol_gain
+            q_to_air = (1 - mass_factor) * q_sol_gain
+            mass_temp = self.mass.update_temperature(q_to_mass, air_temp, mass_temp)
 
-        return None
+            h_ma = 230
+            q_exchange = h_ma * (mass_temp - air_temp)
+
+            q_net = q_to_air + q_heat_gain + q_exchange - q_heat_loss - q_vent_loss
+            air_temp += (q_net) * 3600 / self.cfg.rho_cp_V
+
+
+            simulated.append({
+                "datetime":   forecast_row.name,
+                "T_air":      air_temp,
+                "T_mass":     mass_temp,
+                "heater_on":  heater_on,
+                "part_load":  part_load,
+                "vent_ach":   vent_ach,
+                "Q_solar":    q_sol_gain,
+                "Q_heat":     q_heat_gain,
+                "Q_loss":     q_heat_loss,
+                "Q_vent":     q_vent_loss,
+                "Q_exchange": q_exchange,
+                "Q_net_air":  q_net,
+            })
+        
+        simulated_df = pd.DataFrame(simulated).set_index("datetime")
+        return simulated_df
 
 
