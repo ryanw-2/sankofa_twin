@@ -9,10 +9,15 @@ class Predictive:
     vent_max_ach: float          # max vent rate         [h⁻¹]
     dt_hr: float = 1.0           # simulation time-step  [h]
     T_set: float = 18.0          # comfort set-point     [°C]
-    deadband: float = 1.0        # ± band around set-point
+    deadband: float = 3.0        # ± band around set-point
     safety_margin: float = 0.5   # extra °C buffer
 
     _heater_state: bool = False  # remembers last heater ON/OFF
+
+    min_on_steps = 3
+    min_off_steps = 3
+    _on_timer = 0
+    _off_timer = 0
 
     def decide(self, air_temp, forecast_df):
         T_ext = forecast_df["temp"]
@@ -47,6 +52,17 @@ class Predictive:
         # decision
         heater_on: bool = need_heat and bool(drop_idx <= lead_steps)
 
+        if self._heater_state:   # currently ON
+            self._on_timer  += 1
+            self._off_timer  = 0
+            if self._on_timer < self.min_on_steps:
+                heater_on = True
+        else:                    # currently OFF
+            self._off_timer += 1
+            self._on_timer   = 0
+            if self._off_timer < self.min_off_steps:
+                heater_on = False
+
         if self._heater_state and air_temp > self.T_set + self.deadband / 2:
             heater_on = False
         
@@ -56,9 +72,9 @@ class Predictive:
         self._heater_state = heater_on
         part_load = 1.0 if heater_on else 0.0
 
-        hi_band = self.T_set + self.deadband / 2 + self.safety_margin
-        over_idx = np.argmax(T_pred_off > hi_band)
-        need_vent = bool(over_idx != 0)
+        hi_band = self.T_set + self.deadband / 2 + 5
+        above_mask  = T_pred_off > hi_band
+        need_vent   = above_mask.any() 
         vent_ach = self.vent_max_ach if need_vent else 0.0
 
         return heater_on, part_load, vent_ach

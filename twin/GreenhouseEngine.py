@@ -1,15 +1,21 @@
+import os
+from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 import pvlib
 from typing import cast
-
+import logging
 from Predictive import Predictive
 from ThermalMass import ThermalMass
+
+from forecast import get_geocode, get_hourly_forecast, get_hourly_solar, get_hourly_weather
 """
 The GreenhouseConfig class sets up the constants 
 of the greenhouse based on user defined values.
 """
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ────────────── CONSTANTS (SI) ──────────────────────────────────────────
 CONCRETE_DENSITY_KG_M3 = 2400            # kg m-3
@@ -27,7 +33,7 @@ AIR_DENSITY            = 1.225
 
 # ────────────── GREENHOUSE CONFIG ──────────────────────────────────────
 class GreenhouseConfig:
-    def __init__(self, latitude: float, longitude: float, num_footings: int = 8, design_temp_diff_C: float = 20):
+    def __init__(self, latitude: float, longitude: float, num_footings: int = 8, design_temp_diff_C: float = 25):
         # ── Geometry (m) ────────────────────────────────────────────────
         self.latitude  = latitude
         self.longitude = longitude
@@ -54,7 +60,7 @@ class GreenhouseConfig:
         self.rho_cp_V = AIR_DENSITY * self.volume_m3 * 1005
 
         # ── Fabric performance (m² K W-1) ──────────────────────────────
-        self.wall_R   = 1.8 / R_IP_TO_SI     # 0.317  m² K W-1
+        self.wall_R   = 3 / R_IP_TO_SI     
         self.roof_R   = 1.8 / R_IP_TO_SI
         self.floor_R  = 8.0 / R_IP_TO_SI     # slab to ground
         self.glazing_R = 1 / GLAZING_U_VALUE # 0.312  m² K W-1
@@ -87,15 +93,16 @@ class GreenhouseConfig:
         return concrete_m + soil_m + BAMBOO_MASS_KG
 
     def _build_heater_sizing_W(self) -> int:
+
         Q_cond = self.ua_envelope * self.design_dT  
-        mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * 1.2
+        mass_flow  = (self.volume_m3 * self.design_vent_ach / 3600) * AIR_DENSITY
         Q_vent = mass_flow * 1005 * self.design_dT 
-        safety = 1.30
+        safety = 1.60
         return int((Q_cond + Q_vent) * safety)
 
     def _build_controller(self) -> Predictive:
         leak_U = AIR_DENSITY * self.volume_m3 * self.leak_ach / 3600 * 1005 
-        h_ma = 230
+        h_ma = 1500
         
         sim_C_J_K = self.mass_kg * self.mass_c_p + AIR_DENSITY * self.volume_m3 * 1005
         sim_U_W_K = self.ua_envelope + leak_U + h_ma
@@ -109,39 +116,34 @@ class GreenhouseConfig:
         )
 
         return controller
-
+    
+    def get_summary(self):
+        """Return summary of greenhouse configuration."""
+        return {
+            'location': (self.latitude, self.longitude),
+            'dimensions_m': (self.length, self.width, self.height),
+            'floor_area_m2': self.floor_A,
+            'volume_m3': self.volume_m3,
+            'glazing_area_m2': self.glazing_A,
+            'thermal_mass_kg': self.mass_kg,
+            'ua_envelope_W_K': self.ua_envelope,
+            'heater_capacity_W': self.heater_W
+        }
+    
 class GreenhouseThermalEngine:
     def __init__(self, config: GreenhouseConfig, air_temp_init_C: float):
         self.cfg = config
         self.air_temp = air_temp_init_C            
         self.mass = ThermalMass(config.mass_kg, config.mass_c_p)
 
-    def calculate_solar_gain_W(self, ghi:float, dni:float, dhi:float, solar_zenith:float, solar_azimuth:float):
-        """
-        Calculates the amount of energy entering the building
-        at a given solar position.
-        """
-        if ghi <= 0:
-            return 0.0
+        logger.info(f"Thermal engine initialized with T_air={air_temp_init_C:.1f}°C")
 
-        poa_comp = pvlib.irradiance.get_total_irradiance(
-            self.cfg.surface_tilt_deg,
-            self.cfg.orientation,
-            dni, ghi, dhi,
-            solar_zenith, solar_azimuth,
-            albedo=ALBEDO
-        )
-
-        poa = poa_comp["poa_global"].iloc[0]
-        area_m2 = self.cfg.glazing_A * self.cfg.glazing_tau
-        return float(poa) * area_m2
-
-    def calculate_heat_loss_W(self, air_temp: float, ext_temp: float, wind_m_s: float) -> float:
+    def calculate_heat_loss_W(self, air_temp: float, ext_tempemp: float, wind_m_s: float) -> float:
         """
         Calculates the amount of energy lost due to conduction
         and infiltration.
         """
-        dT = air_temp - ext_temp
+        dT = air_temp - ext_tempemp
 
         # 1. Conduction (W)
         Q_cond = (
@@ -161,18 +163,18 @@ class GreenhouseThermalEngine:
 
         return Q_total
     
-    def calculate_venting_loss_W(self, air_temp: float, ext_temp: float, vent_ach:float) -> float:
+    def calculate_venting_loss_W(self, air_temp: float, ext_tempemp: float, vent_ach:float) -> float:
         """
         Calculates the energy loss due to active ventilation.
         """
-        dT = air_temp - ext_temp
+        dT = air_temp - ext_tempemp
         if vent_ach == 0 or dT < 0:
             return 0.0
         
         CP_AIR = 1005
         volumetric_flow = self.cfg.volume_m3 * (vent_ach / 3600)
         mass_flow = AIR_DENSITY * volumetric_flow
-        Q_vent = mass_flow * CP_AIR * (air_temp - ext_temp)
+        Q_vent = mass_flow * CP_AIR * (air_temp - ext_tempemp)
 
         return Q_vent
 
@@ -189,57 +191,166 @@ class GreenhouseThermalEngine:
         return Q_heat
 
     def simulate_step(self, initial_air_temp, initial_mass_temp, forecast_df, start_i:int=0, steps:int=12, horizon:int=12):
-        assert len(forecast_df) >= start_i + steps + horizon
         # solar gain + heating gain - (venting loss + heat loss)
         simulated = []
-        
+        h_ma = 1500
+
         air_temp = initial_air_temp
         mass_temp = initial_mass_temp
+        mass_fac = 0.8
         for k in range(start_i, start_i + steps):            
-            horizon_df = forecast_df[k:k+horizon] # needs extra 12 hours of data
-            pred_forecast_df = {
-                "temp" : horizon_df["temp"],
-                "Q_solar" : horizon_df["Q_solar"],
+            horizon_df = forecast_df.iloc[k : k + horizon]
+            horizon_dict = {
+                "temp"   : horizon_df["temp"].to_numpy(),
+                "Q_solar": horizon_df["Q_solar"].to_numpy(),
             }
+            heater_on, part_load, vent_ach = self.cfg.controller.decide(air_temp, horizon_dict)
 
-            heater_on, part_load, vent_ach = self.cfg.controller.decide(air_temp, horizon_df)
+            row = forecast_df.iloc[k]
+            ext_temp = row["temp"]
+            wind_speed = row["wind_speed"]
+            Q_solar_hr = row.Q_solar
+            Q_heat_hr  = self.calculate_heating_gain_W(heater_on, part_load)
 
-            forecast_row = forecast_df.iloc[k]
-            ext_temp = forecast_row["temp"]
-            wind_speed = forecast_row["wind_speed"]
-            q_sol_gain = forecast_row["Q_solar"]
-            q_heat_loss = self.calculate_heat_loss_W(air_temp, ext_temp, wind_speed)
-            q_vent_loss = self.calculate_venting_loss_W(air_temp, ext_temp, vent_ach)
-            q_heat_gain = self.calculate_heating_gain_W(heater_on, part_load)
+            # --- 4 sub‑steps of 15 min each -------------------------------
+            Q_solar_sub = Q_solar_hr / 4.0
+            Q_heat_sub  = Q_heat_hr  / 4.0
+            for _ in range(4):
+                # losses at current air temp
+                Q_loss = self.calculate_heat_loss_W(air_temp, ext_temp, wind_speed) / 4.0
+                Q_vent = self.calculate_venting_loss_W(air_temp, ext_temp, vent_ach) / 4.0
 
-            mass_factor = 0.3
-            q_to_mass = mass_factor * q_sol_gain
-            q_to_air = (1 - mass_factor) * q_sol_gain
-            mass_temp = self.mass.update_temperature(q_to_mass, air_temp, mass_temp)
+                # split solar, update mass
+                q_to_mass = mass_fac * Q_solar_sub
+                q_to_air  = (1 - mass_fac) * Q_solar_sub
+                mass_temp = self.mass.update_temperature(q_to_mass, air_temp, mass_temp)
 
-            h_ma = 230
-            q_exchange = h_ma * (mass_temp - air_temp)
+                q_exchange = h_ma * (mass_temp - air_temp)
+                q_net_air  = q_to_air + Q_heat_sub + q_exchange - Q_loss - Q_vent
 
-            q_net = q_to_air + q_heat_gain + q_exchange - q_heat_loss - q_vent_loss
-            air_temp += (q_net) * 3600 / self.cfg.rho_cp_V
+                SUB_DT_HR = 0.25               # 15‑minute physics interval
+                SUB_DT_S  = SUB_DT_HR * 3600
+                air_temp += q_net_air * SUB_DT_S / (self.cfg.rho_cp_V + self.cfg.mass_kg*self.cfg.mass_c_p)
+
 
 
             simulated.append({
-                "datetime":   forecast_row.name,
-                "T_air":      air_temp,
-                "T_mass":     mass_temp,
-                "heater_on":  heater_on,
-                "part_load":  part_load,
-                "vent_ach":   vent_ach,
-                "Q_solar":    q_sol_gain,
-                "Q_heat":     q_heat_gain,
-                "Q_loss":     q_heat_loss,
-                "Q_vent":     q_vent_loss,
-                "Q_exchange": q_exchange,
-                "Q_net_air":  q_net,
+                "datetime"  : row.name,
+                "T_air"     : air_temp,
+                "T_mass"    : mass_temp,
+                "heater_on" : heater_on,
+                "part_load" : part_load,
+                "vent_ach"  : vent_ach,
+                "Q_solar"   : Q_solar_hr,
+                "Q_heat"    : Q_heat_hr,
+                "Q_loss"    : self.calculate_heat_loss_W(air_temp, ext_temp, wind_speed),
+                "Q_vent"    : self.calculate_venting_loss_W(air_temp, ext_temp, vent_ach),
+                "Q_exchange": h_ma * (mass_temp - air_temp),
             })
-        
+            
         simulated_df = pd.DataFrame(simulated).set_index("datetime")
+        logger.info(f"Simulation completed: {steps} steps, "
+                        f"T_air range: {simulated_df['T_air'].min():.1f}-{simulated_df['T_air'].max():.1f}°C")
         return simulated_df
+    
+# load_dotenv()
+# WEATHER_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
+
+# FORECAST_BASE_URL = "https://pro.openweathermap.org/data/2.5/forecast/hourly?"
+# WEATHER_BASE_URL = "https://api.openweathermap.org/data/2.5/weather?"
+# GEOCODE_BASE_URL = "http://api.openweathermap.org/geo/1.0/direct?"
+
+# latitude, longitude = get_geocode("Pittsburgh", "PA", "US")
+
+# config = GreenhouseConfig(latitude, longitude)
+# combined_df = get_hourly_forecast(latitude, longitude, config, "US/Pacific")
+# print(combined_df)
+# GCFG = GreenhouseConfig(latitude, longitude)
+# GEngine = GreenhouseThermalEngine(GCFG, 20.0)
+def create_example_config(city: str = "Pittsburgh", state: str = "PA", country: str = "US") -> GreenhouseConfig:
+    """
+    Create example greenhouse configuration for a given location.
+    
+    Args:
+        city: City name
+        state: State/province code  
+        country: Country code
+        
+    Returns:
+        Configured GreenhouseConfig object
+    """
+    try:
+        # This would require the forecast module to be available
+        # latitude, longitude = get_geocode(city, state, country)
+        
+        # For demo purposes, use Pittsburgh coordinates
+        latitude, longitude = 40.4406, -79.9959
+        
+        config = GreenhouseConfig(
+            latitude=latitude,
+            longitude=longitude,
+            num_footings=8,
+            design_temp_diff_C=20
+        )
+        
+        return config
+        
+    except Exception as e:
+        logger.error(f"Failed to create config for {city}, {state}: {e}")
+        raise
 
 
+if __name__ == "__main__":
+    # ------------------------------------------------------------------
+    # 0 · Dummy 5-hour forecast  ---------------------------------------
+    # ------------------------------------------------------------------
+    times = pd.date_range("2025-08-06 06:00", periods=5, freq="h", tz="UTC")
+    dummy = pd.DataFrame(
+        {
+            # outside air °C
+            "temp":       [18, 18, 19, 20, 22],
+            # constant light breeze m s-1
+            "wind_speed": [2.0]*5,
+            # fake clear-sky solar gain W entering GH
+            "Q_solar":    [0, 5_000, 10_000, 8_000, 2_000],
+        },
+        index=times,
+    )
+    times = pd.date_range("2025-08-06 06:00", periods=6, freq="h", tz="UTC")
+    winter_forecast = pd.DataFrame(
+        {
+            # outdoor dry-bulb temperature (°C)
+            "temp": [-5, -5, -4, -3, -2,  0],
+            # wind speed at 2 m (m s⁻¹)
+            "wind_speed": [3, 4, 4, 5, 4, 3],
+            # net solar power entering GH glazing (W)
+            # — night is 0, clear winter sun peaks ~6 kW at local noon
+            "Q_solar": [0, 0, 1500, 3000, 4500, 6000],
+        },
+        index=times,
+    )
+    print("\nDummy forecast\n--------------")
+    print(winter_forecast)
+
+    # ------------------------------------------------------------------
+    # 1 · Build config & engine  ---------------------------------------
+    # ------------------------------------------------------------------
+    cfg = create_example_config()          # Pittsburgh hard-coded
+    engine = GreenhouseThermalEngine(cfg, air_temp_init_C=20.0)
+    mylat, mylon = get_geocode("San Jose", "CA", "US")
+    forecast_df = get_hourly_forecast(mylat, mylon, cfg, "US/Eastern")
+
+    # ------------------------------------------------------------------
+    # 2 · One simulate_step call (5 h window) --------------------------
+    # ------------------------------------------------------------------
+    sim_df = engine.simulate_step(
+        initial_air_temp = 20.0,
+        initial_mass_temp = 20.0,
+        forecast_df = forecast_df,
+        start_i = 0,
+        steps = 24,
+        horizon = 12,        # look ahead all remaining rows
+    )
+
+    print("\nSimulation results\n------------------")
+    print(sim_df.round(2))

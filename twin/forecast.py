@@ -8,8 +8,6 @@ from typing import cast
 import numpy as np
 import math
 
-from GreenhouseEngine import GreenhouseConfig
-
 load_dotenv()
 WEATHER_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 
@@ -83,7 +81,7 @@ def get_current_weather(my_lat:float, my_lon:float, timezone:str):
 
     return df
 
-def get_hourly_solar(my_lat, my_lon, weather_df, cfg: GreenhouseConfig, timezone:str, count:int = 24):
+def get_hourly_solar(my_lat, my_lon, weather_df, cfg, timezone:str, count:int = 24):
     now   = pd.Timestamp.now(timezone) 
     start = (now + pd.Timedelta(hours=1)).floor("h")   
     times_local = pd.date_range(start=start,
@@ -201,11 +199,5 @@ def get_hourly_forecast(my_lat, my_lon, cfg, timezone, count=24):
 
 
 latitude, longitude = get_geocode("Pittsburgh", "PA", "US")
-
-config = GreenhouseConfig(latitude, longitude)
-combined_df = get_hourly_forecast(latitude, longitude, config, "US/Pacific")
-print(combined_df)
-# df_forecast = get_hourly_forecast(latitude, longitude)
-# df_solar = get_hourly_solar(latitude, longitude)
-# print(f"entry:{df_solar}")
-# print(f"entry:{df_forecast}")
+test_df = get_hourly_weather(latitude, longitude, "US/Eastern")
+print(test_df)
