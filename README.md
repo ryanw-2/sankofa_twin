@@ -7,6 +7,10 @@ By integrating real-time weather APIs with a physically informed heat-transfer m
 
 The goal is to **support resource-efficient greenhouse operation** by forecasting when heating, ventilation, or passive solar gain will maintain optimal growing conditions — before those conditions are reached.
 
+<video width="600" controls>
+   <source src="Streamlit.mp4" type="video/mp4">
+</video>
+
 ## Motivation
 
 Greenhouses operate in a delicate thermal balance. Over-venting wastes energy; under-venting risks plant health.
@@ -17,15 +21,6 @@ For growers, educators, and researchers, this enables:
 * **Energy savings** via proactive control
 * **Crop protection** during extreme weather
 * **Educational insight** into the physics of greenhouse environments
-
-## Agricultural and Design Relevance
-
-This work bridges **environmental control engineering** and **sustainable agriculture**.
-By simulating real-world greenhouse physics, it offers:
-
-* **Design validation** — test configurations before building
-* **Operational training** — explore “what-if” weather scenarios interactively
-* **Climate-responsive design** — optimize passive heating and ventilation
 
 Like an architect’s 3D model, this thermal twin allows stakeholders to **experience and evaluate performance before reality**.
 
@@ -71,6 +66,8 @@ Like an architect’s 3D model, this thermal twin allows stakeholders to **exper
 ## Control Logic Walkthrough — `Predictive.decide`
 
 The **`Predictive.decide`** method is the brain of the system — determining, hour by hour, whether the heater and vents should be engaged based on *both current conditions and the short-term forecast*.
+
+![Algorithm Diagram](Predictive_Flowchart.png)
 
 **Step-by-Step Process**
 
