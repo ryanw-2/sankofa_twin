@@ -38,6 +38,8 @@ Like an architect’s 3D model, this thermal twin allows stakeholders to **exper
 
 ## Algorithmic Overview
 
+![Algorithm Diagram](algorithmic_overview.png)
+
 ### 1. Heat Loss Calculation
 
 **Purpose**: Computes conductive and infiltration losses based on envelope UA values and leakage ACH.
