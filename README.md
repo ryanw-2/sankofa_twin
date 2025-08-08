@@ -8,7 +8,7 @@ By integrating real-time weather APIs with a physically informed heat-transfer m
 The goal is to **support resource-efficient greenhouse operation** by forecasting when heating, ventilation, or passive solar gain will maintain optimal growing conditions — before those conditions are reached.
 
 ![Dashboard Screenshot](dashboard.png)
-
+<img src="streamlit_speed.gif" alt="Dashboard Animation" width="600" />
 ## Motivation
 
 Greenhouses operate in a delicate thermal balance. Over-venting wastes energy; under-venting risks plant health.
