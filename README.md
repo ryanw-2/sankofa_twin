@@ -134,10 +134,10 @@ This separation allows easy swapping of control algorithms or testing different 
 
 ## Demo & Interface
 
-* 🌤 **Run Simulation**: Select location and horizon, fetch forecast, and simulate.
-* 📈 **Charts**: View predicted air temperature, thermal mass, exterior temperature, venting rate, heater status, and solar input.
-* 💰 **Energy Metrics**: Estimated kWh and cost over the simulated period.
-* 📄 **Raw Data**: Download CSV for offline analysis.
+* **Run Simulation**: Select location and horizon, fetch forecast, and simulate.
+* **Charts**: View predicted air temperature, thermal mass, exterior temperature, venting rate, heater status, and solar input.
+* **Energy Metrics**: Estimated kWh and cost over the simulated period.
+* **Raw Data**: Download CSV for offline analysis.
 
 ---
 
